@@ -58,5 +58,14 @@ fi
 # Sync docker time
 #ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
+echo "Configuring OpenSIPS presence server IP..."
+OPENSIPS_AS_EXISTS=`mysql -u root -h ${MYSQL_IP} hss_db -s -N -e "SELECT count(*) FROM application_server WHERE name='default_as';"`
+if [[ "$OPENSIPS_AS_EXISTS" -gt 0 ]]
+then
+	echo "Updating default_as to point to OpenSIPS at ${PRESENCE_IP}..."
+	mysql -u root -h ${MYSQL_IP} hss_db -e "UPDATE application_server SET server_name='sip:${PRESENCE_IP}:5065' WHERE name='default_as';"
+fi
+
+
 cp /mnt/fhoss/hss.sh /
 cd / && ./hss.sh

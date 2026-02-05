@@ -1,13 +1,15 @@
 #!/bin/bash
 
-
 set -x
 RUNTIME=${1:-rtpengine}
 
-if lsmod | grep xt_RTPENGINE || modprobe xt_RTPENGINE; then
+# Try to load kernel module (don't fail if it doesn't exist)
+if lsmod | grep xt_RTPENGINE; then
 	echo "rtpengine kernel module already loaded."
+elif modprobe xt_RTPENGINE 2>/dev/null; then
+	echo "rtpengine kernel module loaded successfully."
 else
-	modprobe xt_RTPENGINE
+	echo "WARNING: rtpengine kernel module not available, using userspace forwarding (slower but functional)"
 fi
 
 # Populate options of the rtpengine cli command
@@ -29,38 +31,51 @@ if test "$NO_FALLBACK" = "yes" ; then
 	OPTIONS="$OPTIONS --no-fallback"
 fi
 
-# Sync docker time
-#ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
 set +e
+
+# Only delete table if kernel module is available
 if [ -e /proc/rtpengine/control ]; then
 	echo "del $TABLE" > /proc/rtpengine/control 2>/dev/null
 fi
-# Freshly add the iptables rules to forward the udp packets to the iptables-extension "RTPEngine":
-# Remember iptables table = chains, rules stored in the chains
-# -N (create a new chain with the name rtpengine)
-iptables -N rtpengine 2> /dev/null
 
-# -D: Delete the rule for the target "rtpengine" if exists. -j (target): chain name or extension name 
-# from the table "filter" (the default -without the option '-t') 
+# Setup IPv4 iptables
+iptables -N rtpengine 2> /dev/null
 iptables -D INPUT -j rtpengine 2> /dev/null
-# Add the rule again so the packets will go to rtpengine chain after the (filter-INPUT) hook point.
 iptables -I INPUT -j rtpengine
-# Delete and Insert a rule in the rtpengine chain to forward the UDP traffic    
-iptables -D rtpengine -p udp -j RTPENGINE --id "$TABLE" 2>/dev/null
-iptables -I rtpengine -p udp -j RTPENGINE --id "$TABLE"
+
+# Only add RTPENGINE target if kernel module is available
+if [ -e /proc/rtpengine/control ]; then
+	iptables -D rtpengine -p udp -j RTPENGINE --id "$TABLE" 2>/dev/null
+	iptables -I rtpengine -p udp -j RTPENGINE --id "$TABLE"
+	echo "IPv4 kernel forwarding enabled"
+else
+	echo "Skipping RTPENGINE iptables target (kernel module not available)"
+fi
+
 iptables-save > /etc/iptables.rules
 
-# The same for IPv6
-ip6tables -N rtpengine 2> /dev/null
-ip6tables -D INPUT -j rtpengine 2> /dev/null
-ip6tables -I INPUT -j rtpengine
-ip6tables -D rtpengine -p udp -j RTPENGINE --id "$TABLE" 2>/dev/null
-ip6tables -I rtpengine -p udp -j RTPENGINE --id "$TABLE"
-ip6tables-save > /etc/ip6tables.rules
+# Setup IPv6 iptables (with error handling)
+echo "Setting up IPv6 tables..."
+if ip6tables -N rtpengine 2> /dev/null; then
+	ip6tables -D INPUT -j rtpengine 2> /dev/null
+	ip6tables -I INPUT -j rtpengine
+	
+	# Only add RTPENGINE target if kernel module is available
+	if [ -e /proc/rtpengine/control ]; then
+		ip6tables -D rtpengine -p udp -j RTPENGINE --id "$TABLE" 2>/dev/null
+		ip6tables -I rtpengine -p udp -j RTPENGINE --id "$TABLE" 2>/dev/null
+		echo "IPv6 kernel forwarding enabled"
+	fi
+	
+	ip6tables-save > /etc/ip6tables.rules 2>/dev/null
+else
+	echo "WARNING: IPv6 tables not available (this is OK, rtpengine will work with IPv4 only)"
+fi
 
-# Add static route to route traffic back to UE as there is not NATing
-ip r add 192.168.101.0/24 via ${UPF_IP}
+# Add static route only if UPF_IP is set (optional for VoLTE/EPC setups)
+if [ ! -z "$UPF_IP" ]; then
+	ip r add 192.168.101.0/24 via ${UPF_IP} 2>/dev/null || echo "Static route already exists or not needed"
+fi
 
 set -x
 

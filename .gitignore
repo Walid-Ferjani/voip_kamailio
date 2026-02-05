@@ -3,3 +3,6 @@ log/
 **/*.db
 **/*.db-shm
 **/*.db-wal
+*.backup
+*.backup2
+*.old

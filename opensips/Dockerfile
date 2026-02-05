@@ -4,13 +4,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install updates and dependencies
 RUN apt-get update && \
-	apt-get -y install syslog-ng syslog-ng-core tcpdump screen tmux ntp ntpdate git-core dkms \
-					gcc flex bison libmysqlclient-dev make libssl-dev libcurl4-openssl-dev \
-					libxml2-dev libpcre3-dev bash-completion g++ autoconf libmnl-dev \
-					libsctp-dev libradcli-dev libradcli4 libjson-c-dev pkg-config iproute2 net-tools \
-					iputils-ping
+    apt-get -y install syslog-ng syslog-ng-core tcpdump screen tmux ntp ntpdate git-core dkms \
+                    gcc flex bison libmysqlclient-dev make libssl-dev libcurl4-openssl-dev \
+                    libxml2-dev libpcre3-dev bash-completion g++ autoconf libmnl-dev \
+                    libsctp-dev libradcli-dev libradcli4 libjson-c-dev pkg-config iproute2 net-tools \
+                    iputils-ping
 
-#Fix SYSLOG ERROR
+# Fix SYSLOG error
 RUN echo 'SYSLOGNG_OPTS="--no-caps"' >> /etc/default/syslog-ng
 
 # Install opensips & modules
@@ -40,18 +40,28 @@ RUN rm -rf /etc/default/opensips && \
 
 COPY opensips/DEFAULT/ /etc/default/
 COPY opensips/init.d/ /etc/init.d
-
-ADD opensips_init.sh /usr/local/opensips_init.sh
+COPY opensips_init.sh /usr/local/opensips_init.sh
 RUN chmod 755 /usr/local/opensips_init.sh
 
-RUN /etc/init.d/mysql start && \
-    /usr/local/opensips_init.sh
+# Run database initialization and OpenSIPS init script
+# DISABLED: Database will be created in external MySQL container at runtime
+# RUN /etc/init.d/mysql start && \
+#     /usr/local/opensips_init.sh
 
+# Instead, just create the opensips user and group
+RUN groupadd -f opensips && \
+    useradd -g opensips opensips 2>/dev/null || true && \
+    mkdir -p /var/log/opensips && \
+    chown -R opensips:opensips /var/log/opensips
+
+# Expose UDP port for OpenSIPS
 EXPOSE 5065/udp
 
+# Copy the start script and make it executable
 ADD start_opensips.sh /usr/local/start_opensips.sh
 RUN chmod 755 /usr/local/start_opensips.sh
 
-RUN /etc/init.d/mysql restart
+# RUN /etc/init.d/mysql restart
     
 CMD /usr/local/start_opensips.sh
+
