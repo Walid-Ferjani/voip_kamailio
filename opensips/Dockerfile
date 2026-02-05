@@ -44,8 +44,15 @@ COPY opensips_init.sh /usr/local/opensips_init.sh
 RUN chmod 755 /usr/local/opensips_init.sh
 
 # Run database initialization and OpenSIPS init script
-RUN /etc/init.d/mysql start && \
-    /usr/local/opensips_init.sh
+# DISABLED: Database will be created in external MySQL container at runtime
+# RUN /etc/init.d/mysql start && \
+#     /usr/local/opensips_init.sh
+
+# Instead, just create the opensips user and group
+RUN groupadd -f opensips && \
+    useradd -g opensips opensips 2>/dev/null || true && \
+    mkdir -p /var/log/opensips && \
+    chown -R opensips:opensips /var/log/opensips
 
 # Expose UDP port for OpenSIPS
 EXPOSE 5065/udp
@@ -54,7 +61,7 @@ EXPOSE 5065/udp
 ADD start_opensips.sh /usr/local/start_opensips.sh
 RUN chmod 755 /usr/local/start_opensips.sh
 
-RUN /etc/init.d/mysql restart
+# RUN /etc/init.d/mysql restart
     
 CMD /usr/local/start_opensips.sh
 

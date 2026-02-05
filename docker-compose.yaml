@@ -1,5 +1,6 @@
 version: '3'
 services:
+  # Layer 1: Base services (DNS and MySQL start first)
   dns:
     build: ./dns
     image: docker_dns
@@ -13,9 +14,148 @@ services:
     expose:
       - "53/udp"
     networks:
-      default:
+      dockervlan:
         ipv4_address: ${DNS_IP}
+    restart: unless-stopped
 
+  mysql:
+    build: ./mysql
+    image: docker_mysql
+    container_name: mysql
+    env_file:
+      - .env
+    volumes:
+      - dbdata:/var/lib/mysql
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    expose:
+      - "3306/tcp"
+    networks:
+      dockervlan:
+        ipv4_address: ${MYSQL_IP}
+    depends_on:
+      - dns
+    restart: unless-stopped
+
+  # Layer 2: HSS (depends on DNS and MySQL)
+  fhoss:
+    build: ./fhoss
+    image: docker_fhoss
+    container_name: fhoss
+    dns: ${DNS_IP}
+    volumes:
+      - ./fhoss:/mnt/fhoss
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    depends_on:
+      - dns
+      - mysql
+    expose:
+      - "3868/udp"
+      - "3868/tcp"
+      - "3869/udp"
+      - "3869/tcp"
+      - "3870/udp"
+      - "3870/tcp"
+    ports:
+      - "8080:8080/tcp"
+    networks:
+      dockervlan:
+        ipv4_address: ${FHOSS_IP}
+    restart: unless-stopped
+
+  # Layer 3: CSCF services (depend on DNS, MySQL, and HSS)
+  icscf:
+    image: kamailio
+    container_name: icscf
+    dns: ${DNS_IP}
+    volumes:
+      - ./icscf:/mnt/icscf
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    environment:
+      - COMPONENT_NAME=icscf-1
+    depends_on:
+      - dns
+      - mysql
+      - fhoss
+    expose:
+      - "3868/udp"
+      - "3868/tcp"
+      - "3869/udp"
+      - "3869/tcp"
+      - "4060/udp"
+      - "4060/tcp"
+    networks:
+      dockervlan:
+        ipv4_address: ${ICSCF_IP}
+    restart: unless-stopped
+
+  scscf:
+    image: kamailio
+    container_name: scscf
+    dns: ${DNS_IP}
+    volumes:
+      - ./scscf:/mnt/scscf
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    environment:
+      - COMPONENT_NAME=scscf-1
+    depends_on:
+      - dns
+      - mysql
+      - fhoss
+    expose:
+      - "3870/udp"
+      - "3870/tcp"
+      - "6060/udp"
+      - "6060/tcp"
+    networks:
+      dockervlan:
+        ipv4_address: ${SCSCF_IP}
+    restart: unless-stopped
+
+  pcscf:
+    image: kamailio
+    container_name: pcscf
+    dns: ${DNS_IP}
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./pcscf:/mnt/pcscf
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    environment:
+      - COMPONENT_NAME=pcscf-1
+    depends_on:
+      - dns
+      - mysql
+      - icscf
+      - scscf
+    expose:
+      - "3871/udp"
+      - "3871/tcp"
+      - "5060/tcp"
+      - "5060/udp"
+      - "5100-5120/tcp"
+      - "5100-5120/udp"
+      - "6100-6120/tcp"
+      - "6100-6120/udp"
+    networks:
+      dockervlan:
+        ipv4_address: ${PCSCF_IP}
+    restart: unless-stopped
+
+  # Layer 4: RTPEngine (depends on P-CSCF being ready) - SECOND TO LAST
   rtpengine:
     build: ./rtpengine
     image: docker_rtpengine
@@ -42,142 +182,14 @@ services:
       - "2223/udp"
       - "49000-50000/udp"
     networks:
-      default:
+      dockervlan:
         ipv4_address: ${RTPENGINE_IP}
     depends_on:
       - dns
+      - pcscf
+    restart: unless-stopped
 
-  mysql:
-    build: ./mysql
-    image: docker_mysql
-    container_name: mysql
-    env_file:
-      - .env
-    volumes:
-      - dbdata:/var/lib/mysql
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-    expose:
-      - "3306/tcp"
-    networks:
-      default:
-        ipv4_address: ${MYSQL_IP}
-    depends_on:
-      - dns
-
-  fhoss:
-    build: ./fhoss
-    image: docker_fhoss
-    container_name: fhoss
-    dns: ${DNS_IP}
-    volumes:
-      - ./fhoss:/mnt/fhoss
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-    env_file:
-      - .env
-    depends_on:
-      - dns
-      - mysql
-    expose:
-      - "3868/udp"
-      - "3868/tcp"
-      - "3869/udp"
-      - "3869/tcp"
-      - "3870/udp"
-      - "3870/tcp"
-    ports:
-      - "8080:8080/tcp"
-    networks:
-      default:
-        ipv4_address: ${FHOSS_IP}
-
-  icscf:
-    image: kamailio
-    container_name: icscf
-    dns: ${DNS_IP}
-    volumes:
-      - ./icscf:/mnt/icscf
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-    env_file:
-      - .env
-    environment:
-      - COMPONENT_NAME=icscf-1
-    depends_on:
-      - dns
-      - mysql
-      - fhoss
-    expose:
-      - "3868/udp"
-      - "3868/tcp"
-      - "3869/udp"
-      - "3869/tcp"
-      - "4060/udp"
-      - "4060/tcp"
-    networks:
-      default:
-        ipv4_address: ${ICSCF_IP}
-
-  scscf:
-    image: kamailio
-    container_name: scscf
-    dns: ${DNS_IP}
-    volumes:
-      - ./scscf:/mnt/scscf
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-    env_file:
-      - .env
-    environment:
-      - COMPONENT_NAME=scscf-1
-    depends_on:
-      - dns
-      - mysql
-      - fhoss
-    expose:
-      - "3870/udp"
-      - "3870/tcp"
-      - "6060/udp"
-      - "6060/tcp"
-    networks:
-      default:
-        ipv4_address: ${SCSCF_IP}
-
-  pcscf:
-    image: kamailio
-    container_name: pcscf
-    dns: ${DNS_IP}
-    privileged: true
-    cap_add:
-      - NET_ADMIN
-    volumes:
-      - ./pcscf:/mnt/pcscf
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-    env_file:
-      - .env
-    environment:
-      - COMPONENT_NAME=pcscf-1
-    depends_on:
-      - dns
-      - mysql
-      - rtpengine
-      - icscf
-      - scscf
-    expose:
-      - "3871/udp"
-      - "3871/tcp"
-      - "5060/tcp"
-      - "5060/udp"
-      - "5100-5120/tcp"
-      - "5100-5120/udp"
-      - "6100-6120/tcp"
-      - "6100-6120/udp"
-    networks:
-      default:
-        ipv4_address: ${PCSCF_IP}
-
+  # Layer 5: OpenSIPS (Presence) - STARTS LAST
   opensips:
     build: ./opensips
     image: opensips
@@ -188,6 +200,7 @@ services:
     depends_on:
       - dns
       - mysql
+      - fhoss
       - rtpengine
       - icscf
       - scscf
@@ -199,14 +212,13 @@ services:
     expose:
       - "5065/udp"
     networks:
-      default:
+      dockervlan:
         ipv4_address: ${PRESENCE_IP}
+    restart: unless-stopped
 
 networks:
-  default:
-    external:
-      name: dockervlan
+  dockervlan:
+    external: true
 
 volumes:
   dbdata: {}
-
